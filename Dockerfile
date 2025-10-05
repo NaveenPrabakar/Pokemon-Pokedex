@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install R packages needed
-RUN R -e "install.packages(c('shiny', 'httr', 'jsonlite', 'ggplot2', 'dplyr', 'tidyr', 'scales'), repos='https://cran.rstudio.com/')"
+RUN R -e "install.packages(c('shiny', 'httr', 'jsonlite', 'ggplot2', 'gridExtra'), repos='https://cran.rstudio.com/')"
 
 # Copy app files into the image
 COPY . /srv/shiny-server/
