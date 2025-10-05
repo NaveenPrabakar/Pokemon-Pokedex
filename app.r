@@ -2,14 +2,13 @@ library(shiny)
 library(httr)
 library(jsonlite)
 library(ggplot2)
+library(dplyr)
 
-# Function to fetch and process Pokémon data
+# Function to fetch Pokémon base data
 fetch_pokemon_stats <- function(name) {
   url <- paste0("https://pokeapi.co/api/v2/pokemon/", tolower(name))
   res <- httr::GET(url)
-  
   if (res$status_code != 200) return(NULL)
-  
   data <- httr::content(res, as = "text", encoding = "UTF-8")
   poke_data <- jsonlite::fromJSON(data)
   
@@ -17,12 +16,14 @@ fetch_pokemon_stats <- function(name) {
     stat = poke_data$stats$stat$name,
     value = poke_data$stats$base_stat,
     stringsAsFactors = FALSE
-  )
-  stats_df <- stats_df[complete.cases(stats_df), ]
-  stats_df$stat <- factor(stats_df$stat, levels = stats_df$stat)
+  ) %>% filter(complete.cases(.))
   
   types <- poke_data$types$type$name
-  moves <- poke_data$moves$move$name
+  
+  moves <- lapply(poke_data$moves, function(mv) {
+    list(name = mv$move$name, url = mv$move$url)
+  })
+  
   image_url <- poke_data$sprites$front_default
   
   list(
@@ -36,184 +37,266 @@ fetch_pokemon_stats <- function(name) {
   )
 }
 
-# UI with Pokédex-style CSS
+# Fetch move type via move URL
+fetch_move_type <- function(move_url) {
+  res <- httr::GET(move_url)
+  if (res$status_code != 200) return(NA)
+  data <- httr::content(res, as = "text", encoding = "UTF-8")
+  move_data <- jsonlite::fromJSON(data)
+  return(move_data$type$name)
+}
+
+# You can expand this color mapping
+type_colors <- c(
+  normal = "#A8A77A",
+  fire = "#EE8130",
+  water = "#6390F0",
+  electric = "#F7D02C",
+  grass = "#7AC74C",
+  ice = "#96D9D6",
+  fighting = "#C22E28",
+  poison = "#A33EA1",
+  ground = "#E2BF65",
+  flying = "#A98FF3",
+  psychic = "#F95587",
+  bug = "#A6B91A",
+  rock = "#B6A136",
+  ghost = "#735797",
+  dragon = "#6F35FC",
+  dark = "#705746",
+  steel = "#B7B7CE",
+  fairy = "#D685AD"
+)
+
 ui <- fluidPage(
   tags$head(
     tags$style(HTML("
       body {
-        background: linear-gradient(135deg, #d32f2f, #b71c1c);
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        color: white;
-        margin: 0;
-        padding: 20px;
+        background: #0f0f10;
+        color: #e0e0e0;
+        font-family: 'Arial', sans-serif;
       }
-      .pokedex-container {
-        max-width: 900px;
-        margin: 0 auto;
-        background: #222;
-        border-radius: 20px;
-        box-shadow: 0 0 15px 5px #b71c1c;
-        padding: 20px 30px;
-      }
-      h1, h3 {
-        font-weight: 700;
-        letter-spacing: 3px;
-        text-align: center;
-        margin-bottom: 15px;
-        text-shadow: 2px 2px 5px #000;
-      }
-      .input-section {
-        margin-bottom: 20px;
-        text-align: center;
-      }
-      input[type='text'] {
-        width: 250px;
-        padding: 8px 10px;
-        border: none;
-        border-radius: 10px;
-        font-size: 16px;
-        margin-right: 10px;
-        box-shadow: inset 2px 2px 5px #900000;
-      }
-      button {
-        background: #b71c1c;
-        border: none;
-        color: white;
-        padding: 10px 18px;
-        font-weight: 700;
-        font-size: 16px;
-        border-radius: 12px;
-        cursor: pointer;
-        box-shadow: 0 3px 6px #640000;
-        transition: background 0.3s ease;
-      }
-      button:hover {
-        background: #f44336;
-      }
-      .poke-info {
+      .container-flex {
         display: flex;
-        align-items: center;
+        flex-wrap: wrap;
+        gap: 20px;
         justify-content: center;
-        gap: 25px;
-        margin-bottom: 25px;
       }
-      .poke-info img {
+      .pokedex-card {
+        background: #1a1a1d;
+        border: 2px solid #444;
         border-radius: 15px;
-        box-shadow: 0 0 10px 3px #f44336;
-        background: #111;
+        padding: 15px;
+        width: 350px;
+      }
+      .poke-header {
+        text-align: center;
+      }
+      .poke-header img {
+        width: 120px;
+        margin-bottom: 10px;
       }
       .poke-details {
-        font-size: 18px;
-        line-height: 1.5;
-        text-shadow: 1px 1px 3px #000;
+        font-size: 14px;
+        margin-bottom: 10px;
+      }
+      .types span {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 8px;
+        margin-right: 5px;
+        font-weight: bold;
+        color: #222;
       }
       .stats-plot {
-        background: #333;
-        padding: 15px;
-        border-radius: 15px;
-        box-shadow: inset 0 0 10px #900000;
+        margin-bottom: 10px;
       }
-      .types, .moves {
-        background: #111;
-        border-radius: 15px;
-        padding: 15px 20px;
-        margin-top: 25px;
-        box-shadow: 0 0 15px 3px #b71c1c;
-        max-height: 280px;
+      .moves-list {
+        max-height: 300px;
         overflow-y: auto;
+        border-top: 1px solid #555;
+        padding-top: 8px;
       }
-      .moves ul {
-        padding-left: 20px;
+      .moves-list ul {
+        list-style: none;
+        padding-left: 0;
       }
-      .moves li {
-        padding: 3px 0;
-        border-bottom: 1px solid #900000;
+      .moves-list li {
+        margin-bottom: 4px;
+        line-height: 1.3;
       }
-      .error-message {
-        color: #ff8080;
-        font-weight: 700;
-        text-align: center;
-        margin-top: 20px;
-        text-shadow: 1px 1px 3px #000;
+      .move-type {
+        font-size: 0.9em;
+        margin-left: 6px;
+        font-weight: bold;
       }
     "))
   ),
-  div(class = "pokedex-container",
-      titlePanel("Pokémon Stats Viewer"),
-      div(class = "input-section",
-          textInput("pokemon_name", "", placeholder = "Enter Pokémon Name (e.g., Pikachu)"),
-          actionButton("go_btn", "Scan")
-      ),
-      uiOutput("poke_info"),
-      div(class = "stats-plot",
-          plotOutput("pokemonPlot")
-      ),
-      uiOutput("poke_types"),
-      uiOutput("poke_moves")
+  
+  titlePanel("Futuristic Pokédex — Compare Two Pokémon"),
+  
+  div(class = "input-section",
+      textInput("pokemon1", "", placeholder = "Enter first Pokémon"),
+      textInput("pokemon2", "", placeholder = "Enter second Pokémon"),
+      actionButton("go_btn", "Scan")
+  ),
+  
+  uiOutput("error_message"),
+  
+  div(class = "container-flex",
+      uiOutput("poke1_card"),
+      uiOutput("poke2_card")
   )
 )
 
-# Server
 server <- function(input, output, session) {
-  poke_info <- eventReactive(input$go_btn, {
-    fetch_pokemon_stats(input$pokemon_name)
+  
+  poke_data <- eventReactive(input$go_btn, {
+    p1 <- fetch_pokemon_stats(input$pokemon1)
+    p2 <- fetch_pokemon_stats(input$pokemon2)
+    list(poke1 = p1, poke2 = p2)
   })
   
-  output$poke_info <- renderUI({
-    info <- poke_info()
-    if (is.null(info)) {
-      div(class = "error-message", "Pokémon not found. Please check the name.")
-    } else {
-      div(class = "poke-info",
-          img(src = info$image, alt = info$name, width = "160px"),
-          div(class = "poke-details",
-              h3(toupper(info$name)),
-              p(paste("Height:", info$height, "m")),
-              p(paste("Weight:", info$weight, "kg"))
-          )
+  # For each Pokémon, get a data.frame of all moves + move types
+  poke_moves_with_types <- reactive({
+    data <- poke_data()
+    if (is.null(data)) return(NULL)
+    get_moves_with_type <- function(moves_list) {
+      if (length(moves_list) == 0) return(NULL)
+      # need to call fetch_move_type for each
+      types_vec <- vapply(moves_list, function(mv) {
+        fetch_move_type(mv$url)
+      }, FUN.VALUE = character(1))
+      df <- data.frame(
+        move = vapply(moves_list, function(mv) mv$name, FUN.VALUE = character(1)),
+        mtype = types_vec,
+        stringsAsFactors = FALSE
       )
+      df
+    }
+    list(
+      poke1 = if (!is.null(data$poke1)) get_moves_with_type(data$poke1$moves) else NULL,
+      poke2 = if (!is.null(data$poke2)) get_moves_with_type(data$poke2$moves) else NULL
+    )
+  })
+  
+  output$error_message <- renderUI({
+    data <- poke_data()
+    if (is.null(data)) return(NULL)
+    if (is.null(data$poke1) && is.null(data$poke2)) {
+      div(style = "color: red;", "Neither Pokémon found.")
+    } else if (is.null(data$poke1)) {
+      div(style = "color: red;", paste("Pokémon 1 ('", input$pokemon1, "') not found.", sep = ""))
+    } else if (is.null(data$poke2)) {
+      div(style = "color: red;", paste("Pokémon 2 ('", input$pokemon2, "') not found.", sep = ""))
+    } else {
+      NULL
     }
   })
   
-  output$pokemonPlot <- renderPlot({
-    info <- poke_info()
-    if (is.null(info)) return(NULL)
-    
-    ggplot(info$stats, aes(x = stat, y = value, fill = stat)) +
+  render_poke_card <- function(p, moves_df, output_plot_id) {
+    tagList(
+      div(class = "pokedex-card",
+          div(class = "poke-header",
+              img(src = p$image, alt = p$name),
+              h3(toupper(p$name))
+          ),
+          div(class = "poke-details",
+              p(sprintf("Height: %.1f m", p$height)),
+              p(sprintf("Weight: %.1f kg", p$weight)),
+              div(class = "types",
+                  lapply(p$types, function(t) {
+                    # color of type badge background
+                    bgcolor <- type_colors[[t]]
+                    span(
+                      toupper(t),
+                      style = sprintf("background: %s;", bgcolor),
+                      class = "type-badge"
+                    )
+                  })
+              )
+          ),
+          div(class = "stats-plot",
+              plotOutput(output_plot_id, height = "230px")
+          ),
+          div(class = "moves-list",
+              h4("All Moves:"),
+              if (!is.null(moves_df) && nrow(moves_df) > 0) {
+                tags$ul(
+                  lapply(seq_len(nrow(moves_df)), function(i) {
+                    mv <- moves_df$move[i]
+                    mt <- moves_df$mtype[i]
+                    # color tag for move type
+                    col <- type_colors[[mt]]
+                    tags$li(
+                      mv,
+                      span(
+                        paste0("(", toupper(mt), ")"),
+                        class = "move-type",
+                        style = if (!is.null(col)) sprintf("color: %s;", col) else ""
+                      )
+                    )
+                  })
+                )
+              } else {
+                "No moves found."
+              }
+          )
+      )
+    )
+  }
+  
+  # Pokémon 1 UI
+  output$poke1_card <- renderUI({
+    data <- poke_data()
+    moves_data <- poke_moves_with_types()
+    if (is.null(data) || is.null(data$poke1)) return(NULL)
+    render_poke_card(data$poke1, moves_data$poke1, "poke1_plot")
+  })
+  
+  # Pokémon 2 UI
+  output$poke2_card <- renderUI({
+    data <- poke_data()
+    moves_data <- poke_moves_with_types()
+    if (is.null(data) || is.null(data$poke2)) return(NULL)
+    render_poke_card(data$poke2, moves_data$poke2, "poke2_plot")
+  })
+  
+  # Plot for Pokémon 1
+  output$poke1_plot <- renderPlot({
+    data <- poke_data()
+    if (is.null(data) || is.null(data$poke1)) return(NULL)
+    p <- data$poke1
+    ggplot(p$stats, aes(x = stat, y = value, fill = stat)) +
       geom_col(show.legend = FALSE) +
-      labs(title = paste("Stats for", toupper(info$name)),
-           x = "Stat",
-           y = "Base Stat Value") +
-      theme_minimal(base_size = 14) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1),
-            plot.background = element_rect(fill = "#333333", color = NA),
-            panel.background = element_rect(fill = "#333333", color = NA),
-            plot.title = element_text(color = "white", face = "bold"),
-            axis.title = element_text(color = "white"),
-            axis.text = element_text(color = "white"))
+      labs(title = paste("Stats —", toupper(p$name)), x = NULL, y = "Base Stat") +
+      theme_minimal() +
+      theme(
+        panel.background = element_rect(fill = "#1a1a1d"),
+        plot.background = element_rect(fill = "#1a1a1d"),
+        axis.text.x = element_text(angle = 45, hjust = 1, color = "#e0e0e0"),
+        axis.text.y = element_text(color = "#e0e0e0"),
+        plot.title = element_text(color = "#f0f0f0", hjust = 0.5)
+      )
   })
   
-  output$poke_types <- renderUI({
-    info <- poke_info()
-    if (is.null(info)) return(NULL)
-    div(class = "types",
-        strong("Type(s): "),
-        paste(toupper(info$types), collapse = ", ")
-    )
-  })
-  
-  output$poke_moves <- renderUI({
-    info <- poke_info()
-    if (is.null(info)) return(NULL)
-    
-    div(class = "moves",
-        h4("Moves"),
-        tags$ul(
-          lapply(info$moves, function(mv) tags$li(mv))
-        )
-    )
+  # Plot for Pokémon 2
+  output$poke2_plot <- renderPlot({
+    data <- poke_data()
+    if (is.null(data) || is.null(data$poke2)) return(NULL)
+    p <- data$poke2
+    ggplot(p$stats, aes(x = stat, y = value, fill = stat)) +
+      geom_col(show.legend = FALSE) +
+      labs(title = paste("Stats —", toupper(p$name)), x = NULL, y = "Base Stat") +
+      theme_minimal() +
+      theme(
+        panel.background = element_rect(fill = "#1a1a1d"),
+        plot.background = element_rect(fill = "#1a1a1d"),
+        axis.text.x = element_text(angle = 45, hjust = 1, color = "#e0e0e0"),
+        axis.text.y = element_text(color = "#e0e0e0"),
+        plot.title = element_text(color = "#f0f0f0", hjust = 0.5)
+      )
   })
 }
 
-# Run the app
 shinyApp(ui, server)
