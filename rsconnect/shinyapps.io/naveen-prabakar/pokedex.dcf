@@ -1,0 +1,10 @@
+name: pokedex
+title:
+username: naveen-prabakar
+account: naveen-prabakar
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15658955
+bundleId: 10993021
+url: https://naveen-prabakar.shinyapps.io/pokedex/
+version: 1
